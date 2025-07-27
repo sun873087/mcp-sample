@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "sse_weather": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse",
+      "disabled": false,
+      "accessToken": "password123",
+      "allowedTools":[
+        "get_alerts",
+        "get_forecast"
+      ],
+      "notAllowedTools":[
+        "get_forecast"
+      ]
+    },
+    "stdio_weather": {
+      "type": "stdio",
+      "command": "uv",
+      "cwd": "src/servers/weather/stdio",
+      "args": ["run", "python", "weather.py"],
+      "disabled": false,
+      "allowedTools":[
+        "get_alerts",
+        "get_forecast"
+      ],
+      "notAllowedTools":[
+        "get_alerts"
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "start-sse-server",
+            "type": "shell",
+            "command": "uv",
+            "args": ["run", "python", "${workspaceFolder}/src/servers/weather/sse/mcp-weather.py"],
+            "group": "build",
+            "options": {
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}/src/servers/weather/sse"
+                }
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "new"
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
+}
