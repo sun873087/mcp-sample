@@ -182,5 +182,7 @@ if __name__ == "__main__":
 
     mcp.settings.host = args.host
     mcp.settings.port = args.port
-
+    mcp.run(
+        transport="streamable-http"
+    )
     uvicorn.run(app, host=mcp.settings.host, port=mcp.settings.port)

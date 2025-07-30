@@ -16,6 +16,7 @@ from mcp.types import (
 )
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from anthropic import Anthropic
 from openai import OpenAI
@@ -122,6 +123,48 @@ class MCPClient:
         response = await self.session.list_tools()
         tools = response.tools
         print("\nConnected to server with tools:", [tool.name for tool in tools])
+
+    async def connect_to_http_server(self, server_config: dict):
+        """連接至HTTP伺服器
+
+        Args:
+            server_config: 伺服器配置字典
+        """
+        # Store the context managers so they stay alive
+        http_params = {
+            "url": server_config["url"], # 伺服器URL
+            "timeout": self.timeout, # 建立連線超時時間
+            "sse_read_timeout": self.timeout * 10 # SSE讀取超時時間，默認為建立連線超時的10倍
+        }
+        if "accessToken" in server_config:
+            http_params["headers"] = {
+                "Authorization": f"Bearer {server_config['accessToken']}" # 添加授權標頭
+            }
+        self._streams_context = streamablehttp_client(**http_params)
+        result = await self._streams_context.__aenter__()
+        print(f"返回值類型: {type(result)}")
+        print(f"返回值內容: {result}")
+        print(f"返回值長度: {len(result) if hasattr(result, '__len__') else 'N/A'}")        
+        receive_stream = result[0]
+        send_stream = result[1]
+        self._session_context = ClientSession(
+            read_stream=receive_stream, # 讀取流
+            write_stream=send_stream, # 寫入流
+            logging_callback=self.logging_callback, # 日誌回調函數
+        )
+        self.session: ClientSession = await self._session_context.__aenter__()
+        # Initialize
+        await self.session.initialize()
+
+        # List available tools to verify connection
+        print("Initialized HTTP client...")
+        print("Listing tools...")
+        response = await self.session.list_tools()
+        tools = response.tools
+        print("\nConnected to server with tools:", [tool.name for tool in tools])
+        
+
+
 
     async def list_tools(self) -> ListToolsResult:
         """列出所有可用的工具"""
@@ -234,7 +277,7 @@ class MCPHost:
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["sse", "stdio"]
+                                    "enum": ["http","sse", "stdio"]
                                 },
                                 "url": {
                                     "type": "string",
@@ -285,7 +328,15 @@ class MCPHost:
                                 "then": {
                                     "required": ["url"]
                                 }
+                                },
+                                {
+                                "if": {
+                                    "properties": { "type": { "const": "http" } }
+                                },
+                                "then": {
+                                    "required": ["url"]
                                 }
+                                },
                             ],
                             "additionalProperties": True
                         }
@@ -320,6 +371,8 @@ class MCPHost:
             client = MCPClient(server_name, server_config, self.logging_callback)  # 初始化MCPClient
             if "sse" in server_config["type"]:
                 await client.connect_to_sse_server(server_config)
+            elif "http" in server_config["type"]:
+                await client.connect_to_http_server(server_config)
             else:
                 await client.connect_to_local_server(server_config)
             mcp_clients.append(client)  # 添加到MCP客戶端列表
@@ -357,7 +410,7 @@ class MCPHost:
                 # 將工具轉換為適合Google GenAI的格式
                 tools = [
                     types.Tool(function_declarations=[types.FunctionDeclaration(
-                        name=f"{mcpClient.server_name}.{tool.name}",
+                        name=f"{mcpClient.server_name}-{tool.name}",
                         description=tool.description,
                         parameters=tool.inputSchema
                     )]) for tool in response.tools
@@ -365,11 +418,11 @@ class MCPHost:
                 # 先加入允許的工具
                 if mcpClient.allowedTools:
                     # 過濾掉不在允許列表中的工具
-                    tools = [tool for tool in tools if tool.function_declarations[0].name.split(".")[1] in mcpClient.allowedTools]
+                    tools = [tool for tool in tools if tool.function_declarations[0].name.split("-")[1] in mcpClient.allowedTools]
                 # 如果有禁用的工具，則過濾掉禁用的工具
                 if mcpClient.notAllowedTools:
                     # 過濾掉在禁用列表中的工具
-                    tools = [tool for tool in tools if tool.function_declarations[0].name.split(".")[1] not in mcpClient.notAllowedTools]
+                    tools = [tool for tool in tools if tool.function_declarations[0].name.split("-")[1] not in mcpClient.notAllowedTools]
 
             elif self.model_vendor == ModelVendor.ANTHROPIC:
                 # 將工具轉換為適合Anthropic的格式
@@ -446,8 +499,8 @@ class MCPHost:
                 assistant_message_content.append(content) # 添加到助手消息內容
             elif content.type == 'tool_use': # 如果內容是工具調用
                 tool_name = content.name
-                server_name = tool_name.split(".")[0] # 獲取伺服器名稱
-                tool_name = tool_name.split(".")[1]
+                server_name = tool_name.split("-")[0] # 獲取伺服器名稱
+                tool_name = tool_name.split("-")[1]
                 tool_args = content.input
                 
                 # 執行工具調用
@@ -534,8 +587,8 @@ class MCPHost:
                     })
                     for tool_call in choice.message.tool_calls:
                         tool_name = tool_call.function.name
-                        server_name = tool_name.split(".")[0] # 獲取伺服器名稱
-                        tool_name = tool_name.split(".")[1]
+                        server_name = tool_name.split("-")[0] # 獲取伺服器名稱
+                        tool_name = tool_name.split("-")[1]
                         # 獲取工具參數
                         tool_args = tool_call.function.arguments
                         tool_args = json.loads(tool_args) # 將工具參數轉換為字典
@@ -583,8 +636,8 @@ class MCPHost:
                     func_results = [] # 用於存儲工具結果
                     for function_call in chunk.function_calls:
                         tool_name = function_call.name
-                        server_name = tool_name.split(".")[0] # 獲取伺服器名稱
-                        tool_name = tool_name.split(".")[1]
+                        server_name = tool_name.split("-")[0] # 獲取伺服器名稱
+                        tool_name = tool_name.split("-")[1]
                         tool_args = function_call.args
                         # 執行工具調用
                         mcpClient = await self.get_mcp_client(server_name) # 獲取MCP客戶端
@@ -646,7 +699,7 @@ async def main():
     with open('servers-config.json', 'r') as f:
         config = json.load(f)
 
-    host = MCPHost(model_vendor=ModelVendor.GOOGLE, config=config) # 初始化MCPHost
+    host = MCPHost(model_vendor=ModelVendor.ANTHROPIC, config=config) # 初始化MCPHost
     await host.create_mcp_clients() # 創建MCP客戶端
     await host.chat_loop() # 運行交互式聊天迴圈
     await host.cleanup() # 清理資源
